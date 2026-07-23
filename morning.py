@@ -77,7 +77,7 @@ def fetch_articles(topics: list, max_per_topic: int = 5) -> dict:
                         "title": a["title"],
                         "description": a["description"],
                         "url": a["url"],
-                        "source": a["source"]["name"],
+                        "source": a["source"],
                         "published": a["publishedAt"][:10]
                     }
                     for a in articles
