@@ -394,5 +394,5 @@ def send_email():
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
-    print("🚀 Morning Brief - running on http://localhost:5000")
+    print("🚀 Morning Brief - Now running!")
     app.run(debug=True)
