@@ -14,15 +14,17 @@ client = None
 def get_client():
     global client
     if client is None:
-        old_http = os.environ.pop('HTTP_PROXY', None)
-        old_https = os.environ.pop('HTTPS_PROXY', None)
-        old_all = os.environ.pop('ALL_PROXY', None)
+        # Clear proxy env vars (both uppercase and lowercase)
+        saved = {}
+        for key in ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']:
+            if key in os.environ:
+                saved[key] = os.environ.pop(key)
         try:
             client = Anthropic()
         finally:
-            if old_http: os.environ['HTTP_PROXY'] = old_http
-            if old_https: os.environ['HTTPS_PROXY'] = old_https
-            if old_all: os.environ['ALL_PROXY'] = old_all
+            # Restore proxy env vars
+            for key, val in saved.items():
+                os.environ[key] = val
     return client
 
 current_briefs = {}
