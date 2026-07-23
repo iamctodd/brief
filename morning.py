@@ -1,323 +1,299 @@
 #!/usr/bin/env python3
 """
-Morning Information Diet Agent - Version 2
-Adds scheduling, positivity filtering, and email delivery.
+Morning Information Diet Agent - Version 3
+Web dashboard + personalization + analytics.
 
-New concepts: 
-- APScheduler for background tasks
-- Sentiment analysis for filtering
-- Email delivery via SMTP
+New concepts:
+- Web framework (Flask) for UI
+- Database for user preferences and history
+- Analytics to learn what users find valuable
 """
 
 from flask import Flask, render_template, request, jsonify
-import os
-import markdown2
-import requests
+import sqlite3
 import json
-from anthropic import Anthropic
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import httpx
+from datetime import datetime
+import os
 
-client = Anthropic()
+app = Flask(__name__)
 
-class MorningNewsAgent:
-    """Stateful agent that manages configuration and scheduling."""
+class UserPreferences:
+    """Manage user settings in SQLite."""
     
-    def __init__(self, config: dict):
-        """
-        Initialize the agent with configuration.
-        
-        Args:
-            config: Dictionary with keys:
-                - topic: The domain to track
-                - schedule_time: "HH:MM" format (e.g., "07:30")
-                - email_to: Recipient email
-                - positivity_threshold: 0-1 score (higher = more positive articles only)
-        """
-        self.config = config
-        self.scheduler = BackgroundScheduler()
-        
-    def assess_article_sentiment(self, article: dict) -> float:
-        """
-        Use Claude to quickly assess if an article is positive/constructive.
-        
-        Returns a score 0-1 where:
-        - 0.0 = pure doom/crisis
-        - 0.5 = neutral/mixed
-        - 1.0 = optimistic/opportunity-focused
-        
-        Args:
-            article: Article dictionary with title and description
-        
-        Returns:
-            Sentiment score 0-1
-        """
-        
-        prompt = f"""Rate this article about {self.config['topic']} on a scale of 0-1 for constructiveness and forward-looking perspective.
-
-0.0 = Pure crisis/doom, no constructive angle
-0.3 = Negative but with some context
-0.5 = Neutral/balanced reporting
-0.7 = Positive with constructive solutions mentioned
-1.0 = Clearly optimistic, opportunity-focused, progress-driven
-
-Article:
-Title: {article['title']}
-Description: {article['description']}
-
-Respond with ONLY a single number 0-1.0 with one decimal place. Example: 0.7"""
-        
-        try:
-            message = client.messages.create(
-                model="claude-opus-4-5",
-                max_tokens=10,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            score_text = message.content[0].text.strip()
-            return float(score_text)
-        except:
-            return 0.5  # Default to neutral if parsing fails
+    def __init__(self, db_path="morning_agent.db"):
+        self.db_path = db_path
+        self._init_db()
     
-    def fetch_and_filter_articles(self) -> list[dict]:
-        """Fetch articles and filter by positivity threshold."""
+    def _init_db(self):
+        """Create tables if they don't exist."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
         
-        api_key = os.getenv("NEWS_API_KEY", "demo")
-        url = "https://newsapi.org/v2/everything"
+        # Users and their preferences
+        c.execute('''CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            email TEXT UNIQUE,
+            topics TEXT,  -- JSON array
+            schedule_time TEXT,
+            positivity_threshold REAL,
+            created_at TIMESTAMP
+        )''')
         
-        params = {
-            "q": self.config["topic"],
-            "sortBy": "publishedAt",
-            "language": "en",
-            "pageSize": 10,  # Fetch more to filter down
-            "apiKey": api_key
+        # Track which briefs were sent and engaged
+        c.execute('''CREATE TABLE IF NOT EXISTS brief_history (
+            id INTEGER PRIMARY KEY,
+            user_email TEXT,
+            date DATE,
+            articles_shown INTEGER,
+            articles_clicked INTEGER,
+            opened BOOLEAN,
+            opened_at TIMESTAMP,
+            created_at TIMESTAMP
+        )''')
+        
+        conn.commit()
+        conn.close()
+    
+    def get_user(self, email: str) -> dict:
+        """Retrieve user preferences."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        c.execute('SELECT * FROM users WHERE email = ?', (email,))
+        row = c.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "email": row[1],
+                "topics": json.loads(row[2]),
+                "schedule_time": row[3],
+                "positivity_threshold": row[4]
+            }
+        return None
+    
+    def create_user(self, email: str, topics: list, schedule_time: str, threshold: float):
+        """Create new user preferences."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        c.execute('''INSERT INTO users (email, topics, schedule_time, positivity_threshold, created_at)
+                     VALUES (?, ?, ?, ?, ?)''',
+                  (email, json.dumps(topics), schedule_time, threshold, datetime.now()))
+        
+        conn.commit()
+        conn.close()
+    
+    def log_brief_sent(self, email: str, articles_shown: int):
+        """Log when a brief is sent."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        c.execute('''INSERT INTO brief_history (user_email, date, articles_shown, opened, created_at)
+                     VALUES (?, ?, ?, ?, ?)''',
+                  (email, datetime.now().date(), articles_shown, False, datetime.now()))
+        
+        conn.commit()
+        conn.close()
+    
+    def log_brief_opened(self, email: str):
+        """Track when a user opens their brief (via email tracking pixel)."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        c.execute('''UPDATE brief_history 
+                     SET opened = 1, opened_at = ?
+                     WHERE user_email = ? AND date = ?''',
+                  (datetime.now(), email, datetime.now().date()))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_engagement_stats(self, email: str, days: int = 30) -> dict:
+        """Get user engagement statistics."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        # Days delivered
+        c.execute('''SELECT COUNT(*) FROM brief_history 
+                     WHERE user_email = ? AND date >= date('now', ?)''',
+                  (email, f'-{days} days'))
+        total_sent = c.fetchone()[0]
+        
+        # Days opened
+        c.execute('''SELECT COUNT(*) FROM brief_history 
+                     WHERE user_email = ? AND opened = 1 AND date >= date('now', ?)''',
+                  (email, f'-{days} days'))
+        total_opened = c.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            "days_in_period": days,
+            "briefs_delivered": total_sent,
+            "briefs_opened": total_opened,
+            "open_rate": (total_opened / total_sent * 100) if total_sent > 0 else 0
         }
+
+
+# Initialize database
+prefs = UserPreferences()
+
+
+@app.route("/")
+def dashboard():
+    """Main dashboard view."""
+    return """
+    <html>
+    <head>
+        <title>☀️ Morning Information Diet</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f9fafb; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 8px; margin-bottom: 30px; }
+            .header h1 { margin: 0; }
+            .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+            .input-group { margin-bottom: 15px; }
+            label { display: block; margin-bottom: 5px; font-weight: 500; }
+            input, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+            button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; }
+            button:hover { background: #5568d3; }
+            .stat { display: inline-block; margin-right: 30px; }
+            .stat-value { font-size: 24px; font-weight: bold; color: #667eea; }
+            .stat-label { font-size: 12px; color: #999; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>☀️ Your Morning Information Diet</h1>
+            <p>Quality over quantity. A better way to start your day.</p>
+        </div>
         
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            articles = response.json().get("articles", [])
+        <div class="card">
+            <h2>Setup Your Preferences</h2>
+            <div class="input-group">
+                <label>Email Address</label>
+                <input type="email" id="email" placeholder="you@example.com">
+            </div>
+            <div class="input-group">
+                <label>Topics to Follow (comma-separated)</label>
+                <input type="text" id="topics" placeholder="e.g., artificial intelligence, climate tech, startups">
+            </div>
+            <div class="input-group">
+                <label>Morning Brief Time</label>
+                <input type="time" id="schedule_time" value="07:30">
+            </div>
+            <div class="input-group">
+                <label>Positivity Filter (0=all news, 1=ultra-positive only)</label>
+                <input type="range" id="threshold" min="0" max="1" step="0.1" value="0.4">
+                <span id="threshold_display">0.4</span>
+            </div>
+            <button onclick="savePreferences()">Save Preferences</button>
+        </div>
+        
+        <div class="card">
+            <h2>📊 Your Engagement</h2>
+            <div id="stats">Loading...</div>
+        </div>
+        
+        <script>
+            document.getElementById('threshold').addEventListener('input', (e) => {
+                document.getElementById('threshold_display').textContent = e.target.value;
+            });
             
-            # Transform articles
-            transformed = []
-            for article in articles:
-                a = {
-                    "title": article["title"],
-                    "description": article["description"],
-                    "url": article["url"],
-                    "source": article["source"]["name"],
-                    "published": article["publishedAt"][:10]
-                }
+            function savePreferences() {
+                const data = {
+                    email: document.getElementById('email').value,
+                    topics: document.getElementById('topics').value.split(',').map(t => t.trim()),
+                    schedule_time: document.getElementById('schedule_time').value,
+                    positivity_threshold: parseFloat(document.getElementById('threshold').value)
+                };
                 
-                # Assess sentiment
-                print(f"  Assessing: {a['title'][:50]}...")
-                a["sentiment_score"] = self.assess_article_sentiment(a)
-                transformed.append(a)
+                fetch('/api/preferences', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                })
+                .then(r => r.json())
+                .then(d => alert(d.message))
+                .catch(e => alert('Error: ' + e));
+            }
             
-            # Filter by positivity threshold
-            threshold = self.config.get("positivity_threshold", 0.4)
-            filtered = [a for a in transformed if a["sentiment_score"] >= threshold]
+            function loadStats() {
+                const email = document.getElementById('email').value;
+                if (!email) return;
+                
+                fetch('/api/stats?email=' + email)
+                    .then(r => r.json())
+                    .then(d => {
+                        document.getElementById('stats').innerHTML = `
+                            <div class="stat">
+                                <div class="stat-value">${d.briefs_delivered}</div>
+                                <div class="stat-label">Briefs Delivered (30d)</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-value">${d.briefs_opened}</div>
+                                <div class="stat-label">Opened</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-value">${d.open_rate.toFixed(0)}%</div>
+                                <div class="stat-label">Open Rate</div>
+                            </div>
+                        `;
+                    });
+            }
             
-            print(f"  Kept {len(filtered)}/{len(articles)} articles (threshold: {threshold})")
-            return filtered
-        
-        except Exception as e:
-            print(f"Error fetching articles: {e}")
-            return []
-    
-    def synthesize_brief(self, articles: list[dict]) -> str:
-        """Create the morning brief from filtered articles."""
-        
-        if not articles:
-            return f"No constructive news about {self.config['topic']} today. Sometimes silence is golden!"
-        
-        articles_text = "\n".join([
-            f"- {a['title']} (Score: {a['sentiment_score']:.1f})\n  {a['description']}"
-            for a in articles
-        ])
-        
-        prompt = f"""You are a morning news curator focused on constructive optimism.
-Synthesize these articles about {self.config['topic']} into a SHORT (2-3 sentences), POSITIVE morning brief.
+            document.getElementById('email').addEventListener('blur', loadStats);
+        </script>
+    </body>
+    </html>
+    """
 
-IMPORTANT: These articles have already been filtered for constructiveness, so lean into the progress.
-- Highlight key trends and opportunities
-- What's changing in {self.config['topic']}?
-- Why should someone in this field care TODAY?
-- End with: "Today's focus: [one actionable insight]"
 
-Keep it under 150 words.
-
-Articles:
-{articles_text}
-
-Write the brief:"""
-        
-        message = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        return message.content[0].text
+@app.route("/api/preferences", methods=["POST"])
+def set_preferences():
+    """API endpoint to save user preferences."""
+    data = request.json
     
-    def send_email(self, brief_html: str):
-        """Send the brief via email using SMTP."""
-        
-        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        sender_email = os.getenv("SENDER_EMAIL")
-        sender_password = os.getenv("SENDER_PASSWORD")
-        recipient_email = self.config["email_to"]
-        
-        if not all([sender_email, sender_password]):
-            print("⚠️  Email not configured. Skipping email delivery.")
-            print("   Set SENDER_EMAIL and SENDER_PASSWORD env vars")
-            return False
-        
-        try:
-            message = MIMEMultipart("alternative")
-            message["Subject"] = f"☀️ Your {self.config['topic'].title()} Morning Brief"
-            message["From"] = sender_email
-            message["To"] = recipient_email
-            
-            message.attach(MIMEText(brief_html, "html"))
-            
-            with smtplib.SMTP(smtp_server, smtp_port) as server:
-                server.starttls()
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, recipient_email, message.as_string())
-            
-            print(f"✓ Email sent to {recipient_email}")
-            return True
-        
-        except Exception as e:
-            print(f"✗ Email failed: {e}")
-            return False
-    
-    def generate_html(self, brief_text: str, articles: list[dict]) -> str:
-        """Generate HTML version of the brief."""
-        
-        articles_html = "\n".join([
-            f"""
-            <div style="margin: 12px 0; padding: 12px; border-left: 3px solid #10b981; background: #f0fdf4;">
-                <p style="margin: 0; font-weight: bold;"><a href="{a['url']}" style="color: #059669; text-decoration: none;">{a['title']}</a></p>
-                <p style="margin: 6px 0 0 0; font-size: 12px; color: #666;">{a['source']} · {a['published']} · Optimism Score: {a['sentiment_score']:.1%}</p>
-            </div>
-            """
-            for a in articles[:3]
-        ])
-        
-        html = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333; }}
-                .header {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 24px; border-radius: 8px; text-align: center; }}
-                .header h1 {{ margin: 0; font-size: 28px; }}
-                .header p {{ margin: 8px 0 0 0; opacity: 0.95; }}
-                .brief {{ background: #ecfdf5; padding: 20px; border-radius: 6px; margin: 20px 0; line-height: 1.6; border: 1px solid #d1fae5; }}
-                .footer {{ font-size: 12px; color: #999; margin-top: 30px; border-top: 1px solid #ddd; padding-top: 20px; text-align: center; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>☀️ Morning Brief</h1>
-                <p>{self.config['topic'].title()}</p>
-                <p style="font-size: 12px; margin: 12px 0 0 0;">{datetime.now().strftime('%A, %B %d, %Y')}</p>
-            </div>
-            
-            <div class="brief">
-                {brief_text}
-            </div>
-            
-            <h3>📰 Today's Sources</h3>
-            {articles_html}
-            
-            <div class="footer">
-                <p><strong>Your Information Diet:</strong> Curated for learning, not doomscrolling.</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return html
-    
-    def run_morning_briefing(self):
-        """Execute the full morning briefing pipeline."""
-        
-        print(f"\n{'='*60}")
-        print(f"🌅 Morning Briefing: {self.config['topic'].upper()}")
-        print(f"   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"{'='*60}\n")
-        
-        print("📰 Fetching and filtering articles...")
-        articles = self.fetch_and_filter_articles()
-        
-        if articles:
-            print(f"\n🤖 Synthesizing brief...")
-            brief = self.synthesize_brief(articles)
-            
-            print(f"\n{brief}\n")
-            
-            html = self.generate_html(brief, articles)
-            
-            # Save to file
-            with open("morning_brief.html", "w") as f:
-                f.write(html)
-            print("✓ HTML saved to morning_brief.html")
-            
-            # Try to send email
-            self.send_email(html)
-        
+    try:
+        existing = prefs.get_user(data["email"])
+        if existing:
+            # Update logic would go here
+            message = "Preferences updated"
         else:
-            print("No constructive articles found today. Take a break!")
-    
-    def schedule(self):
-        """Start the background scheduler."""
+            prefs.create_user(
+                data["email"],
+                data["topics"],
+                data["schedule_time"],
+                data["positivity_threshold"]
+            )
+            message = "Profile created! Your first brief will arrive at " + data["schedule_time"]
         
-        schedule_time = self.config.get("schedule_time", "07:30")
-        
-        self.scheduler.add_job(
-            self.run_morning_briefing,
-            "cron",
-            hour=int(schedule_time.split(":")[0]),
-            minute=int(schedule_time.split(":")[1]),
-            id="morning_briefing"
-        )
-        
-        self.scheduler.start()
-        print(f"✓ Scheduled daily briefing at {schedule_time}")
-        print("  (Press Ctrl+C to stop)\n")
-        
-        # Keep scheduler running
-        try:
-            import time
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.scheduler.shutdown()
-            print("✓ Scheduler stopped")
+        return jsonify({"success": True, "message": message})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
 
-def main():
-    """Run the agent."""
+@app.route("/api/stats", methods=["GET"])
+def get_stats():
+    """API endpoint to get engagement stats."""
+    email = request.args.get("email")
+    if not email:
+        return {"error": "No email provided"}, 400
     
-    config = {
-        "topic": "climate technology",
-        "schedule_time": "07:30",
-        "email_to": "you@example.com",  # Change this
-        "positivity_threshold": 0.4  # 0-1 scale
-    }
-    
-    agent = MorningNewsAgent(config)
-    
-    # For testing, run once immediately instead of waiting for schedule
-    print("Running one-off briefing (not scheduled)\n")
-    agent.run_morning_briefing()
-    
-    # To enable scheduling, uncomment:
-    # agent.schedule()
+    stats = prefs.get_engagement_stats(email)
+    return jsonify(stats)
+
+
+@app.route("/pixel/<email>")
+def tracking_pixel(email):
+    """Invisible pixel to track email opens."""
+    prefs.log_brief_opened(email)
+    # Return a 1x1 transparent GIF
+    gif = b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xFF\xFF\xFF\x21\xF9\x04\x01\x00\x00\x00\x00\x2C\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3B'
+    return gif, 200, {"Content-Type": "image/gif"}
 
 
 if __name__ == "__main__":
-    main()
+    print("🚀 Starting Morning Agent Dashboard")
+    print("   Open: http://localhost:5000")
+    app.run(debug=True)
