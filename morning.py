@@ -9,16 +9,16 @@ New concepts:
 - Email delivery via SMTP
 """
 
+from flask import Flask, render_template, request, jsonify
 import os
-import json
+import markdown2
 import requests
-import httpx
-from datetime import datetime
+import json
 from anthropic import Anthropic
-from apscheduler.schedulers.background import BackgroundScheduler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import httpx
 
 client = Anthropic()
 
