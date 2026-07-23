@@ -135,7 +135,7 @@ def index():
         <div id="error" class="error"></div>
         <form id="form">
             <div class="form-section">
-                <div class="section-title">Topics</div>
+                <div class="section-title">Popular Topics</div>
                 <div class="checkbox-group">
                     <div class="checkbox-item">
                         <input type="checkbox" id="ai" name="topics" value="artificial intelligence" checked>
@@ -151,6 +151,10 @@ def index():
                     </div>
                 </div>
             </div>
+            <div class="form-section">
+                <div class="section-title">Add Custom Topics</div>
+                <textarea id="custom" placeholder="Enter topics separated by commas&#10;Example: startups, biotech, space"></textarea>
+            </div>
             <button type="submit" class="btn" id="btn">Generate My Brief</button>
         </form>
     </div>
@@ -158,11 +162,13 @@ def index():
         document.getElementById('form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const topics = Array.from(document.querySelectorAll('input[name="topics"]:checked')).map(el => el.value);
-            if (!topics.length) { alert('Select at least one topic'); return; }
+            const custom = document.getElementById('custom').value.split(',').map(t => t.trim()).filter(t => t);
+            const allTopics = [...topics, ...custom];
+            if (!allTopics.length) { alert('Select at least one topic'); return; }
             document.getElementById('btn').disabled = true;
             document.getElementById('btn').textContent = 'Generating...';
             try {
-                const res = await fetch('/generate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({topics}) });
+                const res = await fetch('/generate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({topics: allTopics}) });
                 if (!res.ok) throw new Error('Failed');
                 const html = await res.text();
                 document.open(); document.write(html); document.close();
