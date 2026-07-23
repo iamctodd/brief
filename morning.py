@@ -305,57 +305,18 @@ def send_email():
         return jsonify({"success": True, "message": "Demo mode"})
     
     try:
-        # Regenerate briefs from current_briefs
-        briefs_html = ""
-        for topic, articles in current_briefs.items():
-            if articles:
-                brief_text = synthesize_brief(topic, articles)
-                brief_html = markdown2.markdown(brief_text, extras=['nl2br'])
-                
-                articles_html = "\n".join([
-                    f"""<article style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 24px; margin-bottom: 20px;">
-                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #666; margin-bottom: 12px;">{a['source']}</div>
-                    <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 12px;"><a href="{a['url']}" target="_blank" style="color: #000; text-decoration: none;">{a['title']}</a></h3>
-                    <p style="font-size: 14px; color: #666; margin-bottom: 16px;">{a['description']}</p>
-                    <time style="font-size: 12px; color: #999;">{a['published']}</time>
-                </article>"""
-                    for a in articles[:3]
-                ])
-                
-                briefs_html += f"""
-                <div style="margin-bottom: 80px;">
-                    <h2 style="font-size: 32px; font-weight: 700; margin-bottom: 32px;">{topic.title()}</h2>
-                    <div style="background: #f8f8f8; border: 1px solid #e0e0e0; border-radius: 4px; padding: 32px; margin-bottom: 40px;">
-                        {brief_html}
-                    </div>
-                    <h3 style="font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 24px;">Today's Top Stories</h3>
-                    {articles_html}
-                </div>
-                """
+        # Use stored briefs, don't regenerate (avoids API overload)
+        briefs_html = current_briefs_html
         
         email_html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #fff; color: #222; line-height: 1.6; }}
-        .container {{ max-width: 900px; margin: 0 auto; padding: 60px 24px; }}
-        .header {{ text-align: center; margin-bottom: 60px; padding-bottom: 40px; border-bottom: 1px solid #e0e0e0; }}
-        .header h1 {{ font-size: 48px; font-weight: 700; margin-bottom: 12px; }}
-        .header p {{ font-size: 16px; color: #666; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Your Morning Brief</h1>
-            <p>Curated news to start your day informed</p>
-        </div>
-        {briefs_html}
-    </div>
-</body>
-</html>"""
+<html><head><meta charset="UTF-8"><style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #fff; color: #222; line-height: 1.6; }}
+.container {{ max-width: 900px; margin: 0 auto; padding: 60px 24px; }}
+.header {{ text-align: center; margin-bottom: 60px; padding-bottom: 40px; border-bottom: 1px solid #e0e0e0; }}
+.header h1 {{ font-size: 48px; font-weight: 700; margin-bottom: 12px; }}
+.header p {{ font-size: 16px; color: #666; }}
+</style></head><body><div class="container"><div class="header"><h1>Your Morning Brief</h1><p>Curated news to start your day informed</p></div>{briefs_html}</div></body></html>"""
         
         message = MIMEMultipart("alternative")
         message["Subject"] = "Your Morning Brief"
