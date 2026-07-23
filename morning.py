@@ -874,7 +874,7 @@ def generate_html_skeleton(topics_and_articles: dict, topics: list) -> str:
                     "title": a["title"],
                     "description": a["description"],
                     "url": a["url"],
-                    "source": a["source"]["name"],
+                    "source": a["source"],
                     "published": a["published"]
                 }
                 for a in articles
