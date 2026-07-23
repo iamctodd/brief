@@ -12,6 +12,7 @@ New concepts:
 import os
 import json
 import requests
+import httpx
 from datetime import datetime
 from anthropic import Anthropic
 from apscheduler.schedulers.background import BackgroundScheduler
