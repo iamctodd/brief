@@ -10,6 +10,7 @@ Then open: http://localhost:5000
 
 from flask import Flask, render_template, request, jsonify
 import os
+import httpx
 import markdown2
 import requests
 import json
@@ -26,7 +27,10 @@ client = None
 def get_client():
     global client
     if client is None:
-        client = Anthropic()
+        import httpx
+        # Create httpx client explicitly to avoid Fly proxy issues
+        http_client = httpx.Client()
+        client = Anthropic(http_client=http_client)
     return client
 
 # Store generated briefs in memory (for this request cycle)
