@@ -20,8 +20,14 @@ from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 
-# Initialize Claude client
-client = Anthropic()
+# Initialize Claude client (lazy - created when first needed)
+client = None
+
+def get_client():
+    global client
+    if client is None:
+        client = Anthropic()
+    return client
 
 # Store generated briefs in memory (for this request cycle)
 current_briefs = {}
