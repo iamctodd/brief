@@ -305,6 +305,34 @@ def send_email():
         return jsonify({"success": True, "message": "Demo mode"})
     
     try:
+        # Regenerate briefs from current_briefs
+        briefs_html = ""
+        for topic, articles in current_briefs.items():
+            if articles:
+                brief_text = synthesize_brief(topic, articles)
+                brief_html = markdown2.markdown(brief_text, extras=['nl2br'])
+                
+                articles_html = "\n".join([
+                    f"""<article style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 24px; margin-bottom: 20px;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #666; margin-bottom: 12px;">{a['source']}</div>
+                    <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 12px;"><a href="{a['url']}" target="_blank" style="color: #000; text-decoration: none;">{a['title']}</a></h3>
+                    <p style="font-size: 14px; color: #666; margin-bottom: 16px;">{a['description']}</p>
+                    <time style="font-size: 12px; color: #999;">{a['published']}</time>
+                </article>"""
+                    for a in articles[:3]
+                ])
+                
+                briefs_html += f"""
+                <div style="margin-bottom: 80px;">
+                    <h2 style="font-size: 32px; font-weight: 700; margin-bottom: 32px;">{topic.title()}</h2>
+                    <div style="background: #f8f8f8; border: 1px solid #e0e0e0; border-radius: 4px; padding: 32px; margin-bottom: 40px;">
+                        {brief_html}
+                    </div>
+                    <h3 style="font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 24px;">Today's Top Stories</h3>
+                    {articles_html}
+                </div>
+                """
+        
         email_html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -324,7 +352,7 @@ def send_email():
             <h1>Your Morning Brief</h1>
             <p>Curated news to start your day informed</p>
         </div>
-        {current_briefs_html}
+        {briefs_html}
     </div>
 </body>
 </html>"""
@@ -342,6 +370,7 @@ def send_email():
         
         return jsonify({"success": True, "message": "Sent!"})
     except Exception as e:
+        print(f"Email error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
