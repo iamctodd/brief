@@ -149,15 +149,15 @@ def index():
                         <label for="cyber">Cybersecurity</label>
                     </div>
                     <div class="checkbox-item">
-                        <input type="checkbox" id="ai" name="topics" value="artificial intelligence" checked>
+                        <input type="checkbox" id="ai" name="topics" value="artificial intelligence">
                         <label for="ai">Artificial Intelligence</label>
                     </div>
                     <div class="checkbox-item">
-                        <input type="checkbox" id="climate" name="topics" value="climate technology" checked>
+                        <input type="checkbox" id="climate" name="topics" value="climate technology">
                         <label for="climate">Climate Technology</label>
                     </div>
                     <div class="checkbox-item">
-                        <input type="checkbox" id="energy" name="topics" value="renewable energy" checked>
+                        <input type="checkbox" id="energy" name="topics" value="renewable energy">
                         <label for="energy">Renewable Energy</label>
                     </div>
                     <div class="checkbox-item">
